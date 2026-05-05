@@ -1,2 +1,372 @@
 # science
 태양계 행성의 공전
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>태양계 AI 시뮬레이션</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: white;
+            font-family: 'Pretendard', sans-serif;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        .ui-panel {
+            position: absolute;
+            background: rgba(10, 10, 20, 0.85);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+            z-index: 10;
+        }
+        .controls {
+            top: 20px;
+            left: 20px;
+            padding: 20px;
+            width: 260px;
+        }
+        .ai-guide {
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .planet-info-popup {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid #4f46e5;
+            padding: 10px;
+            border-radius: 8px;
+            pointer-events: none;
+            display: none;
+            transform: translate(15px, 15px);
+        }
+        .loading-dots:after {
+            content: ' .';
+            animation: dots 1s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: ' .'; }
+            40% { content: ' ..'; }
+            60% { content: ' ...'; }
+            80%, 100% { content: ''; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 왼쪽 컨트롤 패널 -->
+    <div class="ui-panel controls">
+        <h1 class="text-xl font-bold mb-1 text-indigo-400">Solar System AI</h1>
+        <p class="text-xs opacity-60 mb-4">행성을 클릭하여 AI 가이드를 받으세요.</p>
+        
+        <div class="space-y-4">
+            <div>
+                <label class="text-xs block mb-1">공전 속도</label>
+                <input type="range" id="speedRange" min="0" max="5" step="0.1" value="1" class="w-full accent-indigo-500">
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="showOrbits" checked class="w-4 h-4 rounded accent-indigo-500">
+                <label for="showOrbits" class="text-xs">궤도 표시</label>
+            </div>
+            <button id="resetView" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-xs transition-colors">시점 초기화</button>
+        </div>
+    </div>
+
+    <!-- AI 가이드 패널 -->
+    <div class="ui-panel ai-guide" id="aiPanel">
+        <div class="flex items-center gap-2 mb-3">
+            <span class="text-lg">✨</span>
+            <h2 class="font-bold text-indigo-300">Gemini 우주 도슨트</h2>
+        </div>
+        <div id="aiResponse" class="text-sm leading-relaxed mb-4 opacity-90 overflow-y-auto max-h-64">
+            탐험하고 싶은 행성을 클릭하거나 아래에 질문을 남겨주세요.
+        </div>
+        <div class="mt-auto pt-3 border-t border-white/10">
+            <div class="flex gap-2">
+                <input type="text" id="userInput" placeholder="우주에 대해 물어보세요..." class="flex-1 bg-white/5 border border-white/20 rounded px-3 py-2 text-xs focus:outline-none focus:border-indigo-500">
+                <button id="askButton" class="bg-indigo-600 px-3 py-2 rounded text-xs hover:bg-indigo-500 transition-colors">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 호버 정보 -->
+    <div id="planetPopup" class="planet-info-popup text-xs text-white"></div>
+
+    <canvas id="solarCanvas"></canvas>
+
+    <script type="module">
+        const canvas = document.getElementById('solarCanvas');
+        const ctx = canvas.getContext('2d');
+        const speedInput = document.getElementById('speedRange');
+        const orbitCheckbox = document.getElementById('showOrbits');
+        const aiResponse = document.getElementById('aiResponse');
+        const userInput = document.getElementById('userInput');
+        const askButton = document.getElementById('askButton');
+        const planetPopup = document.getElementById('planetPopup');
+        const resetBtn = document.getElementById('resetView');
+
+        let width, height;
+        let scale = 0.8;
+        let offset = { x: 0, y: 0 };
+        let isDragging = false;
+        let lastMousePos = { x: 0, y: 0 };
+        const apiKey = ""; // API 키는 환경에서 제공됩니다.
+
+        // 행성 데이터
+        const planets = [
+            { id: "mercury", name: "수성", dist: 70, size: 4, speed: 0.047, color: "#A5A5A5", angle: Math.random() * Math.PI * 2 },
+            { id: "venus", name: "금성", dist: 110, size: 7, speed: 0.035, color: "#E3BB76", angle: Math.random() * Math.PI * 2 },
+            { id: "earth", name: "지구", dist: 160, size: 8, speed: 0.029, color: "#2271B3", angle: Math.random() * Math.PI * 2 },
+            { id: "mars", name: "화성", dist: 210, size: 5, speed: 0.024, color: "#E27B58", angle: Math.random() * Math.PI * 2 },
+            { id: "jupiter", name: "목성", dist: 300, size: 22, speed: 0.013, color: "#D39C7E", angle: Math.random() * Math.PI * 2 },
+            { id: "saturn", name: "토성", dist: 400, size: 18, speed: 0.009, color: "#C5AB6E", angle: Math.random() * Math.PI * 2, hasRing: true },
+            { id: "uranus", name: "천왕성", dist: 480, size: 12, speed: 0.006, color: "#BBE1E4", angle: Math.random() * Math.PI * 2 },
+            { id: "neptune", name: "해왕성", dist: 550, size: 12, speed: 0.005, color: "#6081FF", angle: Math.random() * Math.PI * 2 }
+        ];
+
+        // 배경 별
+        const stars = [];
+        function createStars() {
+            stars.length = 0;
+            for (let i = 0; i < 600; i++) {
+                stars.push({
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    size: Math.random() * 1.5,
+                    opacity: Math.random()
+                });
+            }
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            createStars();
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 시점 제어
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMousePos = { x: e.clientX, y: e.clientY };
+            checkPlanetClick(e.clientX, e.clientY);
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = e.clientX - lastMousePos.x;
+                const dy = e.clientY - lastMousePos.y;
+                offset.x += dx;
+                offset.y += dy;
+                lastMousePos = { x: e.clientX, y: e.clientY };
+            }
+            updateHover(e.clientX, e.clientY);
+        });
+
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('wheel', (e) => {
+            const zoomSpeed = 0.001;
+            scale -= e.deltaY * zoomSpeed;
+            scale = Math.max(0.1, Math.min(4, scale));
+        });
+
+        resetBtn.addEventListener('click', () => {
+            scale = 0.8;
+            offset = { x: 0, y: 0 };
+        });
+
+        // 행성 클릭 감지
+        function checkPlanetClick(mx, my) {
+            const centerX = width / 2 + offset.x;
+            const centerY = height / 2 + offset.y;
+
+            for (const planet of planets) {
+                const px = centerX + Math.cos(planet.angle) * planet.dist * scale;
+                const py = centerY + Math.sin(planet.angle) * planet.dist * scale;
+                const d = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
+                
+                if (d < (planet.size * scale + 10)) {
+                    askGemini(`태양계 행성인 '${planet.name}'에 대해 흥미로운 사실 3가지를 아주 짧고 친절하게 알려줘.`);
+                    return;
+                }
+            }
+        }
+
+        function updateHover(mx, my) {
+            const centerX = width / 2 + offset.x;
+            const centerY = height / 2 + offset.y;
+            let hovered = null;
+
+            for (const planet of planets) {
+                const px = centerX + Math.cos(planet.angle) * planet.dist * scale;
+                const py = centerY + Math.sin(planet.angle) * planet.dist * scale;
+                const d = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
+                
+                if (d < (planet.size * scale + 5)) {
+                    hovered = planet;
+                    break;
+                }
+            }
+
+            if (hovered) {
+                planetPopup.style.display = 'block';
+                planetPopup.style.left = mx + 'px';
+                planetPopup.style.top = my + 'px';
+                planetPopup.innerText = `${hovered.name} (클릭하여 정보 보기)`;
+                canvas.style.cursor = 'pointer';
+            } else {
+                planetPopup.style.display = 'none';
+                canvas.style.cursor = 'crosshair';
+            }
+        }
+
+        // Gemini API 호출 함수 (지수 백오프 포함)
+        async function askGemini(query) {
+            aiResponse.innerHTML = `<span class="loading-dots text-indigo-300">데이터를 분석 중입니다</span>`;
+            
+            const systemPrompt = "당신은 태양계 시뮬레이션의 전문 가이드입니다. 사용자의 질문에 대해 천문학적 지식을 바탕으로 친절하고 흥미롭게 한국어로 답변하세요. 답변은 모바일에서도 읽기 좋게 짧은 문단으로 구성하세요.";
+            
+            const callApi = async (retries = 0) => {
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: query }] }],
+                            systemInstruction: { parts: [{ text: systemPrompt }] }
+                        })
+                    });
+
+                    if (!response.ok) throw new Error('API request failed');
+                    
+                    const data = await response.json();
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "답변을 가져오지 못했습니다.";
+                    aiResponse.innerHTML = text.replace(/\n/g, '<br>');
+                    aiResponse.scrollTop = 0;
+                } catch (error) {
+                    if (retries < 5) {
+                        const delay = Math.pow(2, retries) * 1000;
+                        setTimeout(() => callApi(retries + 1), delay);
+                    } else {
+                        aiResponse.innerHTML = "죄송합니다. 우주 통신에 문제가 발생했습니다. 나중에 다시 시도해주세요.";
+                    }
+                }
+            };
+
+            callApi();
+        }
+
+        askButton.addEventListener('click', () => {
+            if (userInput.value.trim()) {
+                askGemini(userInput.value);
+                userInput.value = "";
+            }
+        });
+
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && userInput.value.trim()) {
+                askGemini(userInput.value);
+                userInput.value = "";
+            }
+        });
+
+        // 렌더링 루프
+        function draw() {
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, 0, width, height);
+
+            // 배경 별
+            stars.forEach(star => {
+                ctx.globalAlpha = star.opacity;
+                ctx.beginPath();
+                ctx.fillStyle = 'white';
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            ctx.save();
+            ctx.translate(width / 2 + offset.x, height / 2 + offset.y);
+            ctx.scale(scale, scale);
+
+            // 태양
+            const sunGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 35);
+            sunGrad.addColorStop(0, '#FFF');
+            sunGrad.addColorStop(0.2, '#FFF500');
+            sunGrad.addColorStop(0.5, '#FF8000');
+            sunGrad.addColorStop(1, 'rgba(255, 60, 0, 0)');
+            
+            ctx.beginPath();
+            ctx.fillStyle = sunGrad;
+            ctx.arc(0, 0, 60, 0, Math.PI * 2);
+            ctx.fill();
+
+            const simSpeed = parseFloat(speedInput.value);
+
+            // 행성 렌더링
+            planets.forEach(planet => {
+                if (orbitCheckbox.checked) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                    ctx.lineWidth = 1 / scale;
+                    ctx.arc(0, 0, planet.dist, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                const x = Math.cos(planet.angle) * planet.dist;
+                const y = Math.sin(planet.angle) * planet.dist;
+
+                // 토성 고리
+                if (planet.hasRing) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = 'rgba(197, 171, 110, 0.3)';
+                    ctx.lineWidth = 4;
+                    ctx.ellipse(x, y, planet.size * 2, planet.size * 0.7, planet.angle + 0.5, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                // 행성 그림자 효과를 위한 그라데이션
+                const pGrad = ctx.createRadialGradient(x - planet.size*0.3, y - planet.size*0.3, 0, x, y, planet.size);
+                pGrad.addColorStop(0, planet.color);
+                pGrad.addColorStop(1, '#000');
+
+                ctx.beginPath();
+                ctx.fillStyle = pGrad;
+                ctx.arc(x, y, planet.size, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 텍스트
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = `${11 / scale}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(planet.name, x, y + planet.size + (15 / scale));
+
+                planet.angle += planet.speed * simSpeed * 0.3;
+            });
+
+            ctx.restore();
+            requestAnimationFrame(draw);
+        }
+
+        window.onload = draw;
+    </script>
+</body>
+</html>
